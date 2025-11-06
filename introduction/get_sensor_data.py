@@ -20,14 +20,15 @@ class MyAgent(SparkAgent):
     
     def think(self, perception):
         action = super(MyAgent, self).think(perception)
+        
         angle = 0
         temperature = 0
-    
         angle = perception.joint.get('HeadYaw')
         temperature = perception.joint_temperature.get('HeadYaw')
 
         print('HeadYaw angle: ' + str(angle) + ' temperature: ' + str(temperature))
         return super(MyAgent, self).think(perception)
+        # return action
 
 if '__main__' == __name__:
     agent = MyAgent()
