@@ -21,7 +21,9 @@
 
 
 from pid import PIDAgent
+from keyframes import wipe_forehead
 from keyframes import hello
+from spark_agent import JOINT_CMD_NAMES
 
 
 class AngleInterpolationAgent(PIDAgent):
@@ -41,7 +43,38 @@ class AngleInterpolationAgent(PIDAgent):
 
     def angle_interpolation(self, keyframes, perception):
         target_joints = {}
-        # YOUR CODE HERE
+        
+        # Accessing keyframes
+        names, times, keys = keyframes
+
+        # Current time for the movement in question
+        if len(times) == 0:
+            current_time = perception.time
+        else:
+
+            ntime = len(times[0])-1
+            current_time = perception.time % times[0][ntime]  
+
+        # Go through each keyframe and time for each joint in the action
+        for i, joint_name in enumerate(names):
+            t_seq = times[i]
+            # Secure way of handilng keyframes
+            k_seq = [k[0] if isinstance(k, list) else k for k in keys[i]]
+
+            # Find the two keyframes closest to current_time
+            for j in range(len(t_seq) - 1):
+                if t_seq[j] <= current_time <= t_seq[j + 1]:
+                    ratio = (current_time - t_seq[j]) / (t_seq[j + 1] - t_seq[j])
+                    angle = k_seq[j] + ratio * (k_seq[j + 1] - k_seq[j])
+                    target_joints[joint_name] = angle
+                    break
+            else:
+                target_joints[joint_name] = k_seq[-1]
+
+        # Fill missing joints with current positions to prevent error
+        for joint in JOINT_CMD_NAMES.keys():
+            if joint not in target_joints:
+                target_joints[joint] = perception.joint.get(joint, 0.0)
 
         return target_joints
 
