@@ -23,7 +23,6 @@ sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '
 
 import autograd.numpy as anp
 
-from numpy.matlib import matrix, identity, sin, cos, sqrt
 
 from recognize_posture import PostureRecognitionAgent
 
@@ -35,7 +34,7 @@ class ForwardKinematicsAgent(PostureRecognitionAgent):
                  player_id=0,
                  sync_mode=True):
         super(ForwardKinematicsAgent, self).__init__(simspark_ip, simspark_port, teamname, player_id, sync_mode)
-        self.transforms = {n: identity(4) for n in self.joint_names}
+        self.transforms = {n: anp.eye(4) for n in self.joint_names}
 
         # chains defines the name of chain and joints of the chain
         self.chains = {'Head': ['HeadYaw', 'HeadPitch'],
@@ -50,7 +49,7 @@ class ForwardKinematicsAgent(PostureRecognitionAgent):
         return super(ForwardKinematicsAgent, self).think(perception)
 
     def local_trans(self, joint_name, angle):
-        T = anp.identity(4)
+        T = anp.eye(4)
 
        
         # First we consider the rotation axis for every joint
@@ -90,8 +89,8 @@ class ForwardKinematicsAgent(PostureRecognitionAgent):
                 [axis*axis*(1-c)+axis*s, 0, axis*axis*(1-c)+c]
             ])
         else:
-            # Else we set R to be identity so no error
-            R = anp.identity(3)
+            # Else we set R to be eye so no error
+            R = anp.eye(3)
 
        # Joint translations
         dx = dy = dz = 0.0
@@ -133,6 +132,7 @@ class ForwardKinematicsAgent(PostureRecognitionAgent):
             dx, dy, dz = translations[joint_name]
 
        # Construct output transformation matrix
+        T = T.copy()  # important for autograd
         T[0:3, 0:3] = R
         T[0:3, 3] = anp.array([dx, dy, dz])
 
@@ -140,7 +140,7 @@ class ForwardKinematicsAgent(PostureRecognitionAgent):
 
     def forward_kinematics(self, joints):
         for chain, chain_joints in self.chains.items():
-            T = identity(4)
+            T = anp.eye(4)
             for j in chain_joints:
                 angle = joints[j]
                 T = T @ self.local_trans(j, angle)
