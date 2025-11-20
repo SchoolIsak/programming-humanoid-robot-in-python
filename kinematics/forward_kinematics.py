@@ -21,7 +21,9 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', 'joint_control'))
 
-from numpy.matlib import matrix, identity
+import autograd.numpy as anp
+
+from numpy.matlib import matrix, identity, sin, cos, sqrt
 
 from recognize_posture import PostureRecognitionAgent
 
@@ -36,40 +38,115 @@ class ForwardKinematicsAgent(PostureRecognitionAgent):
         self.transforms = {n: identity(4) for n in self.joint_names}
 
         # chains defines the name of chain and joints of the chain
-        self.chains = {'Head': ['HeadYaw', 'HeadPitch']
-                       # YOUR CODE HERE
+        self.chains = {'Head': ['HeadYaw', 'HeadPitch'],
+                       'LArm': ['LShoulderPitch', 'LShoulderRoll', 'LElbowYaw', 'LElbowRoll'], #, 'LWristYaw','LHand'
+                       'RArm': ['RShoulderPitch', 'RShoulderRoll', 'RElbowYaw', 'RElbowRoll'], #, 'RWristYaw','RHand'
+                       'LLeg': ['LHipYawPitch', 'LHipRoll', 'LHipPitch', 'LKneePitch', 'LAnklePitch', 'LAnkleRoll'],
+                       'RLeg': ['RHipYawPitch', 'RHipRoll', 'RHipPitch', 'RKneePitch', 'RAnklePitch', 'RAnkleRoll']
                        }
 
     def think(self, perception):
         self.forward_kinematics(perception.joint)
         return super(ForwardKinematicsAgent, self).think(perception)
 
-    def local_trans(self, joint_name, joint_angle):
-        '''calculate local transformation of one joint
+    def local_trans(self, joint_name, angle):
+        T = anp.identity(4)
 
-        :param str joint_name: the name of joint
-        :param float joint_angle: the angle of joint in radians
-        :return: transformation
-        :rtype: 4x4 matrix
-        '''
-        T = identity(4)
-        # YOUR CODE HERE
+       
+        # First we consider the rotation axis for every joint
+        if joint_name in ["HeadYaw", "LElbowYaw", "RElbowYaw"]:
+            # Z axis
+            R = anp.array([[anp.cos(angle), -anp.sin(angle), 0],
+                           [anp.sin(angle),  anp.cos(angle), 0],
+                           [0, 0, 1]]) 
+
+        elif joint_name in ["HeadPitch", "LShoulderPitch", "RShoulderPitch",
+                            "LHipPitch", "RHipPitch",
+                            "LKneePitch", "RKneePitch",
+                            "LAnklePitch", "RAnklePitch"]:
+            # Y axis
+            R = anp.array([[anp.cos(angle), 0, anp.sin(angle)],
+                           [0, 1, 0],
+                           [-anp.sin(angle), 0, anp.cos(angle)]]) 
+
+        elif joint_name in ["LShoulderRoll", "RShoulderRoll",
+                            "LElbowRoll", "RElbowRoll",
+                            "LHipRoll", "RHipRoll",
+                            "LAnkleRoll", "RAnkleRoll"]:
+            # X axis
+            R = anp.array([[1, 0, 0],
+                           [0, anp.cos(angle), -anp.sin(angle)],
+                           [0, anp.sin(angle),  anp.cos(angle)]])  # 
+
+        # Special: HipYawPitch has a 45° rotated axis
+        elif joint_name in ["LHipYawPitch", "RHipYawPitch"]:
+            c = anp.cos(angle)
+            s = anp.sin(angle)
+            axis = 1.0 / anp.sqrt(2.0)
+            # Rotation around axis (x+z)/√2
+            R = anp.array([
+                [axis*axis*(1-c)+c, 0, axis*axis*(1-c)-axis*s],
+                [0, 1, 0],
+                [axis*axis*(1-c)+axis*s, 0, axis*axis*(1-c)+c]
+            ])
+        else:
+            # Else we set R to be identity so no error
+            R = anp.identity(3)
+
+       # Joint translations
+        dx = dy = dz = 0.0
+
+        # We get the needed values directly from the documentation
+        translations = {
+            # Head
+            "HeadYaw":         (0, 0, 0.1265),
+            "HeadPitch":       (0, 0, 0),
+
+            # Left arm
+            "LShoulderPitch":  (0.0, +0.098, +0.100),
+            "LShoulderRoll":   (0, 0, 0),
+            "LElbowYaw":       (0.105, 0.015, 0),
+            "LElbowRoll":      (0.0, 0, 0),
+
+            # Right arm
+            "RShoulderPitch":  (0.0, -0.098, +0.100),
+            "RShoulderRoll":   (0, 0, 0),
+            "RElbowYaw":       (0.105, -0.015, 0),
+            "RElbowRoll":      (0, 0, 0),
+
+            # Left leg
+            "LHipYawPitch":    (0, +0.05, -0.085),
+            "LHipRoll":        (0, 0, 0),
+            "LHipPitch":       (0, 0, -0.10),
+            "LKneePitch":      (0, 0, -0.1029),
+            "LAnklePitch":     (0, 0, -0.1029),
+
+            # Right leg
+            "RHipYawPitch":    (0, -0.05, -0.085),
+            "RHipRoll":        (0, 0, 0),
+            "RHipPitch":       (0, 0, -0.10),
+            "RKneePitch":      (0, 0, -0.1029),
+            "RAnklePitch":     (0, 0, -0.1029),
+        }
+
+        if joint_name in translations:
+            dx, dy, dz = translations[joint_name]
+
+       # Construct output transformation matrix
+        T[0:3, 0:3] = R
+        T[0:3, 3] = anp.array([dx, dy, dz])
 
         return T
 
     def forward_kinematics(self, joints):
-        '''forward kinematics
-
-        :param joints: {joint_name: joint_angle}
-        '''
-        for chain_joints in self.chains.values():
+        for chain, chain_joints in self.chains.items():
             T = identity(4)
-            for joint in chain_joints:
-                angle = joints[joint]
-                Tl = self.local_trans(joint, angle)
-                # YOUR CODE HERE
+            for j in chain_joints:
+                angle = joints[j]
+                T = T @ self.local_trans(j, angle)
+                self.transforms[j] = T
 
-                self.transforms[joint] = T
+    
 
 if __name__ == '__main__':
     agent = ForwardKinematicsAgent()
