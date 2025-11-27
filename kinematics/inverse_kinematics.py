@@ -27,7 +27,7 @@ class InverseKinematicsAgent(ForwardKinematicsAgent):
         :return: list of joint angles
         '''
 
-        # --- NAO Leg joint order ---
+        # NAO Leg joints
         leg_joints = [
             "LHipYawPitch" if effector_name == "LLeg" else "RHipYawPitch",
             "LHipRoll"     if effector_name == "LLeg" else "RHipRoll",
@@ -37,24 +37,24 @@ class InverseKinematicsAgent(ForwardKinematicsAgent):
             "LAnkleRoll"   if effector_name == "LLeg" else "RAnkleRoll"
         ]
 
-        # --- Full list of robot joints from ForwardKinematicsAgent ---
-        all_joints = self.joint_names   # typically includes Head, Arms, Legs
+        # List of joints from ForwardKinematicsAgent
+        all_joints = self.joint_names   
 
         # Initial guess for optimized joints
         q0 = anp.zeros(len(leg_joints))
 
         T_target = anp.array(transform)
 
-        # ---------- Loss function for autograd ----------
+        # Loss function for autograd
         def loss(q):
-            # Build a *full* joint dictionary
+            # Build a joint dictionary
             joint_dict = {}
 
             # Fill leg joints from q
             for i, joint in enumerate(leg_joints):
                 joint_dict[joint] = q[i]
 
-            # Fill all other joints with 0
+            # Else fill with 0
             for j in all_joints:
                 if j not in joint_dict:
                     joint_dict[j] = 0.0
@@ -69,7 +69,7 @@ class InverseKinematicsAgent(ForwardKinematicsAgent):
 
         dloss = grad(loss)
 
-        # ---------- Gradient descent ----------
+        # Gradient descent
         q = q0.copy()
         lr = 0.02
 
@@ -92,25 +92,26 @@ class InverseKinematicsAgent(ForwardKinematicsAgent):
             names = ["RHipYawPitch", "RHipRoll", "RHipPitch",
                      "RKneePitch", "RAnklePitch", "RAnkleRoll"]
 
-        # keyframes = (list of joint names, list of angles, list of times)
+        
         times = [[0.0, 1.0] for _ in joint_angles]
 
-        # keys: for each joint we provide two angles [start_angle, end_angle].
-        # Using the same angle twice will cause a constant target pose (no jump).
-        # Convert to plain float to avoid numpy/autograd scalar types causing len()/type issues.
+        
+        # Convert to plain float to not cause error
         keys = [[float(angle), float(angle)] for angle in joint_angles]
 
-        # Proper keyframes format expected by angle_interpolation: (names, times, keys)
+        # Construct keyframes in correct structure
         self.keyframes = (names, times, keys)
 
 
 if __name__ == '__main__':
     agent = InverseKinematicsAgent()
-    # test inverse kinematics
+    # test inverse kinematics (?)
     T = anp.eye(4)
     T[-1, 1] = 0.05
     T[-1, 2] = -0.26
     agent.set_transforms('LLeg', T)
     agent.run()
+
+
 
 
