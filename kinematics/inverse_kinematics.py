@@ -1,153 +1,116 @@
-'''In this exercise you need to implement forward kinematics for NAO robot
+# NOTE: This file was edited 27.11, since it didn't work prior. This had to be corrected for the next assignment
+'''In this exercise you need to implement inverse kinematics for NAO's legs
 
 * Tasks:
-    1. complete the kinematics chain definition (self.chains in class ForwardKinematicsAgent)
-       The documentation from Aldebaran is here:
-       http://doc.aldebaran.com/2-1/family/robots/bodyparts.html#effector-chain
-    2. implement the calculation of local transformation for one joint in function
-       ForwardKinematicsAgent.local_trans. The necessary documentation are:
+    1. solve inverse kinematics for NAO's legs by using analytical or numerical method.
+       You may need documentation of NAO's leg:
        http://doc.aldebaran.com/2-1/family/nao_h21/joints_h21.html
        http://doc.aldebaran.com/2-1/family/nao_h21/links_h21.html
-    3. complete function ForwardKinematicsAgent.forward_kinematics, save the transforms of all body parts in torso
-       coordinate into self.transforms of class ForwardKinematicsAgent
-
-* Hints:
-    1. the local_trans has to consider different joint axes and link parameters for different joints
-    2. Please use radians and meters as unit.
+    2. use the results of inverse kinematics to control NAO's legs (in InverseKinematicsAgent.set_transforms)
+       and test your inverse kinematics implementation.
 '''
 
-# add PYTHONPATH
-import os
-import sys
-sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', 'joint_control'))
 
+from forward_kinematics import ForwardKinematicsAgent
+from numpy.matlib import identity
 import autograd.numpy as anp
+from autograd import grad
+import numpy as np
 
 
-from recognize_posture import PostureRecognitionAgent
+class InverseKinematicsAgent(ForwardKinematicsAgent):
+    def inverse_kinematics(self, effector_name, transform):
+        '''solve the inverse kinematics
+
+        :param str effector_name: name of end effector, e.g. LLeg, RLeg
+        :param transform: 4x4 transform matrix
+        :return: list of joint angles
+        '''
+
+        # --- NAO Leg joint order ---
+        leg_joints = [
+            "LHipYawPitch" if effector_name == "LLeg" else "RHipYawPitch",
+            "LHipRoll"     if effector_name == "LLeg" else "RHipRoll",
+            "LHipPitch"    if effector_name == "LLeg" else "RHipPitch",
+            "LKneePitch"   if effector_name == "LLeg" else "RKneePitch",
+            "LAnklePitch"  if effector_name == "LLeg" else "RAnklePitch",
+            "LAnkleRoll"   if effector_name == "LLeg" else "RAnkleRoll"
+        ]
+
+        # --- Full list of robot joints from ForwardKinematicsAgent ---
+        all_joints = self.joint_names   # typically includes Head, Arms, Legs
+
+        # Initial guess for optimized joints
+        q0 = anp.zeros(len(leg_joints))
+
+        T_target = anp.array(transform)
+
+        # ---------- Loss function for autograd ----------
+        def loss(q):
+            # Build a *full* joint dictionary
+            joint_dict = {}
+
+            # Fill leg joints from q
+            for i, joint in enumerate(leg_joints):
+                joint_dict[joint] = q[i]
+
+            # Fill all other joints with 0
+            for j in all_joints:
+                if j not in joint_dict:
+                    joint_dict[j] = 0.0
+
+            # Compute forward kinematics
+            T_fk = self.forward_kinematics(joint_dict, effector=effector_name)
+
+            pos_err = anp.sum((T_fk[:3, 3] - T_target[:3, 3]) ** 2)
+            rot_err = anp.sum((T_fk[:3, :3] - T_target[:3, :3]) ** 2)
+
+            return pos_err + rot_err
+
+        dloss = grad(loss)
+
+        # ---------- Gradient descent ----------
+        q = q0.copy()
+        lr = 0.02
+
+        for _ in range(200):
+            q = q - lr * dloss(q)
+
+        return list(q)
 
 
-class ForwardKinematicsAgent(PostureRecognitionAgent):
-    def __init__(self, simspark_ip='localhost',
-                 simspark_port=3100,
-                 teamname='DAInamite',
-                 player_id=0,
-                 sync_mode=True):
-        super(ForwardKinematicsAgent, self).__init__(simspark_ip, simspark_port, teamname, player_id, sync_mode)
-        self.transforms = {n: anp.eye(4) for n in self.joint_names}
+    def set_transforms(self, effector_name, transform):
+        '''solve the inverse kinematics and control joints use the results
+        '''
 
-        # chains defines the name of chain and joints of the chain
-        self.chains = {'Head': ['HeadYaw', 'HeadPitch'],
-                       'LArm': ['LShoulderPitch', 'LShoulderRoll', 'LElbowYaw', 'LElbowRoll'], #, 'LWristYaw','LHand'
-                       'RArm': ['RShoulderPitch', 'RShoulderRoll', 'RElbowYaw', 'RElbowRoll'], #, 'RWristYaw','RHand'
-                       'LLeg': ['LHipYawPitch', 'LHipRoll', 'LHipPitch', 'LKneePitch', 'LAnklePitch', 'LAnkleRoll'],
-                       'RLeg': ['RHipYawPitch', 'RHipRoll', 'RHipPitch', 'RKneePitch', 'RAnklePitch', 'RAnkleRoll']
-                       }
+        joint_angles = self.inverse_kinematics(effector_name, transform)
 
-    def think(self, perception):
-        self.forward_kinematics(perception.joint)
-        return super(ForwardKinematicsAgent, self).think(perception)
-
-    def local_trans(self, joint_name, angle):
-        T = anp.eye(4)
-
-       
-        # First we consider the rotation axis for every joint
-        if joint_name in ["HeadYaw", "LElbowYaw", "RElbowYaw"]:
-            # Z axis
-            R = anp.array([[anp.cos(angle), -anp.sin(angle), 0],
-                           [anp.sin(angle),  anp.cos(angle), 0],
-                           [0, 0, 1]]) 
-
-        elif joint_name in ["HeadPitch", "LShoulderPitch", "RShoulderPitch",
-                            "LHipPitch", "RHipPitch",
-                            "LKneePitch", "RKneePitch",
-                            "LAnklePitch", "RAnklePitch"]:
-            # Y axis
-            R = anp.array([[anp.cos(angle), 0, anp.sin(angle)],
-                           [0, 1, 0],
-                           [-anp.sin(angle), 0, anp.cos(angle)]]) 
-
-        elif joint_name in ["LShoulderRoll", "RShoulderRoll",
-                            "LElbowRoll", "RElbowRoll",
-                            "LHipRoll", "RHipRoll",
-                            "LAnkleRoll", "RAnkleRoll"]:
-            # X axis
-            R = anp.array([[1, 0, 0],
-                           [0, anp.cos(angle), -anp.sin(angle)],
-                           [0, anp.sin(angle),  anp.cos(angle)]])  # 
-
-        # Special: HipYawPitch has a 45° rotated axis
-        elif joint_name in ["LHipYawPitch", "RHipYawPitch"]:
-            c = anp.cos(angle)
-            s = anp.sin(angle)
-            axis = 1.0 / anp.sqrt(2.0)
-            # Rotation around axis (x+z)/√2
-            R = anp.array([
-                [axis*axis*(1-c)+c, 0, axis*axis*(1-c)-axis*s],
-                [0, 1, 0],
-                [axis*axis*(1-c)+axis*s, 0, axis*axis*(1-c)+c]
-            ])
+        if effector_name == "LLeg":
+            names = ["LHipYawPitch", "LHipRoll", "LHipPitch",
+                     "LKneePitch", "LAnklePitch", "LAnkleRoll"]
         else:
-            # Else we set R to be eye so no error
-            R = anp.eye(3)
+            names = ["RHipYawPitch", "RHipRoll", "RHipPitch",
+                     "RKneePitch", "RAnklePitch", "RAnkleRoll"]
 
-       # Joint translations
-        dx = dy = dz = 0.0
+        # keyframes = (list of joint names, list of angles, list of times)
+        times = [[0.0, 1.0] for _ in joint_angles]
 
-        # We get the needed values directly from the documentation
-        translations = {
-            # Head
-            "HeadYaw":         (0, 0, 0.1265),
-            "HeadPitch":       (0, 0, 0),
+        # keys: for each joint we provide two angles [start_angle, end_angle].
+        # Using the same angle twice will cause a constant target pose (no jump).
+        # Convert to plain float to avoid numpy/autograd scalar types causing len()/type issues.
+        keys = [[float(angle), float(angle)] for angle in joint_angles]
 
-            # Left arm
-            "LShoulderPitch":  (0.0, +0.098, +0.100),
-            "LShoulderRoll":   (0, 0, 0),
-            "LElbowYaw":       (0.105, 0.015, 0),
-            "LElbowRoll":      (0.0, 0, 0),
+        # Proper keyframes format expected by angle_interpolation: (names, times, keys)
+        self.keyframes = (names, times, keys)
 
-            # Right arm
-            "RShoulderPitch":  (0.0, -0.098, +0.100),
-            "RShoulderRoll":   (0, 0, 0),
-            "RElbowYaw":       (0.105, -0.015, 0),
-            "RElbowRoll":      (0, 0, 0),
-
-            # Left leg
-            "LHipYawPitch":    (0, +0.05, -0.085),
-            "LHipRoll":        (0, 0, 0),
-            "LHipPitch":       (0, 0, -0.10),
-            "LKneePitch":      (0, 0, -0.1029),
-            "LAnklePitch":     (0, 0, -0.1029),
-
-            # Right leg
-            "RHipYawPitch":    (0, -0.05, -0.085),
-            "RHipRoll":        (0, 0, 0),
-            "RHipPitch":       (0, 0, -0.10),
-            "RKneePitch":      (0, 0, -0.1029),
-            "RAnklePitch":     (0, 0, -0.1029),
-        }
-
-        if joint_name in translations:
-            dx, dy, dz = translations[joint_name]
-
-       # Construct output transformation matrix
-        T = T.copy()  # important for autograd
-        T[0:3, 0:3] = R
-        T[0:3, 3] = anp.array([dx, dy, dz])
-
-        return T
-
-    def forward_kinematics(self, joints):
-        for chain, chain_joints in self.chains.items():
-            T = anp.eye(4)
-            for j in chain_joints:
-                angle = joints[j]
-                T = T @ self.local_trans(j, angle)
-                self.transforms[j] = T
-
-    
 
 if __name__ == '__main__':
-    agent = ForwardKinematicsAgent()
+    agent = InverseKinematicsAgent()
+    # test inverse kinematics
+    T = anp.eye(4)
+    T[-1, 1] = 0.05
+    T[-1, 2] = -0.26
+    agent.set_transforms('LLeg', T)
     agent.run()
+
+
